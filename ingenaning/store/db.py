@@ -149,9 +149,14 @@ class Database:
 
     def close(self) -> None:
         """Close every connection this Database opened, on any thread. A thread that
-        uses the Database again afterwards transparently gets a new connection."""
-        with self._registry_lock:
-            conns, self._conns = self._conns, []
-            self._generation += 1
-        for conn in conns:
-            conn.close()
+        uses the Database again afterwards transparently gets a new connection.
+
+        Takes the write lock, so a writer inside `tx()` finishes and commits first:
+        closing its connection under it would abort that transaction with a
+        ProgrammingError and discard writes that were already made."""
+        with self._write_lock:
+            with self._registry_lock:
+                conns, self._conns = self._conns, []
+                self._generation += 1
+            for conn in conns:
+                conn.close()

@@ -107,6 +107,42 @@ def test_tx_propagates_the_real_error_when_sqlite_rolled_back_itself(settings):
     db.close()
 
 
+def test_close_waits_for_an_open_transaction(settings):
+    """close() on one thread must not pull the connection out from under a writer
+    that is inside tx(): that aborts the transaction and discards its writes."""
+    db = Database(settings.db_path)
+    db.migrate()
+    started, closed = threading.Event(), threading.Event()
+    errors: list[BaseException] = []
+
+    def writer() -> None:
+        try:
+            with db.tx() as c:
+                q.insert_access(c, [(1, "c", "open", "/a", 0, "hot")])
+                started.set()
+                closed.wait(0.5)  # long enough for an uncooperative close() to land
+                q.insert_access(c, [(2, "c", "open", "/b", 0, "hot")])
+        except BaseException as exc:
+            errors.append(exc)
+
+    def closer() -> None:
+        db.close()
+        closed.set()
+
+    w = threading.Thread(target=writer)
+    w.start()
+    assert started.wait(5.0)
+    c_thread = threading.Thread(target=closer)
+    c_thread.start()
+    w.join(10.0)
+    c_thread.join(10.0)
+    assert not errors
+    reopened = Database(settings.db_path)
+    with reopened.connection() as c:
+        assert c.execute("SELECT COUNT(*) FROM access").fetchone()[0] == 2
+    reopened.close()
+
+
 def test_concurrent_writers_do_not_lock(db: Database):
     errors: list[BaseException] = []
 
