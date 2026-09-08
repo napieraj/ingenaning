@@ -35,3 +35,16 @@ candidate generator, or prompt may read them. See build doc §5.
 The build doc's `fatrace -c -t -f RWO /srv/nas` is wrong (no path argument,
 R is per-read noise) and superseded by D-001. The build doc's "container
 exports NFS" is superseded by D-002.
+
+## D-006 — 2026-09-08 — Reuse OSS for union and mover
+Survey found no open-source tool that predicts first open or learns from
+outcomes; every tiering tool (mergerfs movers, autotier, HSMs) places by
+frequency/age/fullness after the fact. The union and the move primitive are
+therefore reused, not rewritten:
+- mergerfs stays the union, per its documented tiered-cache pattern.
+- executor/move.py adopts the mechanics of mergerfs-cache-mover
+  (instance lock, hysteresis, empty-dir cleanup, rsync invocation) and
+  keeps only arm-driven file selection as original code.
+- autotier is reference only. Speedloader is a candidate for /models if
+  that directory dominates.
+See AGENTS.md "Prior art" and rule 11.

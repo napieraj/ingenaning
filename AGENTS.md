@@ -45,3 +45,22 @@ Applies to any agent or person working in this repository.
 ## Layout
 See docs/ingenaning-software-build.md §1. Documents in docs/ are the spec;
 docs/DECISIONS.md overrides them where they conflict.
+
+## Prior art — reuse before writing
+The union and the mover are solved problems. Do not reimplement what these
+already do; read them, vendor or depend where licence and shape allow, and
+record the choice in docs/DECISIONS.md.
+
+| Concern | Use | Notes |
+|---|---|---|
+| Union filesystem | mergerfs (trapexit) | Already the design. Follow the documented two-pool tiered-cache pattern: https://trapexit.github.io/mergerfs/usage_patterns/ |
+| Threshold mover mechanics | mergerfs-cache-mover (MonsterMuffin), `mergerfs.percent-full-mover` (trapexit tools) | Lift: single-instance lock, threshold/target hysteresis, oldest-first fallback, empty-dir cleanup, rsync flags. Our executor adds arm-driven selection on top; it does not replace the move primitive. |
+| Model-directory tiering | Speedloader (Skylark-Software) | If `/models` becomes the dominant hot-tier workload, evaluate running it for that directory instead of our own placement. |
+| Reference design | 45Drives autotier | FUSE tiering by frequency/age/fullness. Read its conflict handling (`.autotier_conflict.<tier>`) and quota semantics before writing ours. Do not adopt: it replaces mergerfs and appears unmaintained. |
+
+What is ours and only ours: candidate generation, learned scoring, planner
+arms, the bandit, outcomes, expectations, signals. Effort goes there.
+
+Rule 11. Before writing any module under executor/ or telemetry/, check
+this table and the linked sources. A PR that reimplements a listed concern
+without a DECISIONS.md entry explaining why is rejected.
