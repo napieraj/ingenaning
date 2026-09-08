@@ -19,7 +19,7 @@ from typing import Any, Literal
 from urllib.parse import unquote, urlparse
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 log = logging.getLogger(__name__)
 
@@ -580,43 +580,64 @@ def flatten_policy(raw: Mapping[str, Any], where: str = "policy.yaml") -> dict[s
 def merge_generated(data: dict[str, Any], generated: Mapping[str, Any], where: str) -> None:
     """Fold policy.generated.yaml into flattened policy data. It may only add pins
     and schedules that carry `until`; on the same path or name policy.yaml wins.
-    Everything else in it is ignored with a warning."""
+    Everything else in it is ignored with a warning.
+
+    Each generated entry is validated here and dropped if it does not hold, so a
+    file the intent arm wrote can never reach Settings and stop the daemon. The
+    hand-written policy is authoritative and is never dropped: it keeps raising."""
+    dropped = 0
     pins: list[Any] = list(data.get("pins") or [])
     have_paths = {_norm_path(str(p["path"])) for p in pins if isinstance(p, Mapping)}
     for p in _pin_entries(generated.get("pins"), "intent"):
-        if not isinstance(p, Mapping):
+        pin: PinRule | None = None
+        if isinstance(p, Mapping):
+            try:
+                pin = PinRule.model_validate({**p, "source": "intent"})
+            except ValidationError:
+                pin = None  # bad tier, unparseable until, missing path, unknown key
+        if pin is None:
+            dropped += 1
             continue
-        path = _norm_path(str(p.get("path", "")))
-        if _to_epoch(p.get("until")) is None:
-            log.warning("%s: pin %s has no until and is ignored", where, path)
+        if pin.until is None:
+            log.warning("%s: pin %s has no until and is ignored", where, pin.path)
             continue
-        if path in have_paths:
-            log.info("%s: pin %s is set by policy.yaml; generated entry ignored", where, path)
+        if pin.path in have_paths:
+            log.info("%s: pin %s is set by policy.yaml; generated entry ignored", where, pin.path)
             continue
-        pins.append({**p, "source": "intent"})
-        have_paths.add(path)
+        pins.append(pin)
+        have_paths.add(pin.path)
     data["pins"] = pins
 
     scheds: list[Any] = list(data.get("schedules") or [])
     have_names = {str(s["name"]) for s in scheds if isinstance(s, Mapping)}
     for s in _as_list(generated.get("schedules")):
-        if not isinstance(s, Mapping) or "name" not in s:
-            log.warning("%s: bad schedule entry %r ignored", where, s)
+        sched: ScheduleRule | None = None
+        if isinstance(s, Mapping):
+            try:
+                sched = ScheduleRule.model_validate({**s, "source": "intent"})
+            except ValidationError:
+                sched = None  # missing name, bad cron or action, unparseable until
+        if sched is None:
+            dropped += 1
             continue
-        name = str(s["name"])
-        if _to_epoch(s.get("until")) is None:
-            log.warning("%s: schedule %s has no until and is ignored", where, name)
+        if sched.until is None:
+            log.warning("%s: schedule %s has no until and is ignored", where, sched.name)
             continue
-        if name in have_names:
-            log.info("%s: schedule %s is set by policy.yaml; generated entry ignored", where, name)
+        if sched.name in have_names:
+            log.info(
+                "%s: schedule %s is set by policy.yaml; generated entry ignored", where, sched.name
+            )
             continue
-        scheds.append({**s, "source": "intent"})
-        have_names.add(name)
+        scheds.append(sched)
+        have_names.add(sched.name)
     data["schedules"] = scheds
 
     for key in generated:
         if key not in ("pins", "schedules"):
             log.warning("%s: key %r is not something the generated policy may set", where, key)
+    if dropped:
+        # Counts only: the paths in this file are the user's, and this is a warning.
+        log.warning("%s: dropped %d entries that did not validate", where, dropped)
 
 
 def read_yaml(path: Path) -> dict[str, Any]:

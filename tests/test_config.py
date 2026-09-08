@@ -201,3 +201,33 @@ def test_quiet_range_wraps_midnight():
     )
     assert QuietRange(start="09:00", end="17:00").contains(datetime(2026, 1, 1, 12, 0))
     assert QuietRange.parse("23:00-06:00") == r
+
+
+def test_bad_generated_entries_are_dropped_and_yaml_survives(tmp_path: Path, caplog):
+    """A malformed policy.generated.yaml must never stop the daemon: the entries
+    that do not validate are dropped, the rest of the file and policy.yaml stand."""
+    (tmp_path / "policy.yaml").write_text("pins: {hot: [/keep]}\n")
+    (tmp_path / "policy.generated.yaml").write_text(
+        "pins:\n"
+        "  - {path: /warmish, tier: warm, until: '2099-01-01'}\n"
+        "  - {path: /undated, tier: hot, until: 'the day after tomorrow'}\n"
+        "  - {path: /good, tier: hot, until: '2099-01-01'}\n"
+        "schedules:\n"
+        "  - {name: bad, cron: sometime, action: promote, until: '2099-01-01'}\n"
+        "  - {name: fine, cron: '0 5 * * *', action: promote, until: '2099-01-01'}\n"
+    )
+    with caplog.at_level("WARNING"):
+        s = load_settings(policy=tmp_path / "policy.yaml")
+    assert {(p.path, p.tier, p.source) for p in s.pins} == {
+        ("/keep", "hot", "yaml"),
+        ("/good", "hot", "intent"),
+    }
+    assert [(x.name, x.source) for x in s.schedules] == [("fine", "intent")]
+    assert "/warmish" not in caplog.text  # counts, not paths
+
+
+def test_bad_hand_written_policy_still_raises(tmp_path: Path):
+    """policy.yaml is authoritative: a typo there must not silently mean 'default'."""
+    (tmp_path / "policy.yaml").write_text("pins:\n  - {path: /warmish, tier: warm}\n")
+    with pytest.raises(ValueError):
+        load_settings(policy=tmp_path / "policy.yaml")
