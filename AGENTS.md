@@ -8,12 +8,15 @@ Applies to any agent or person working in this repository.
   kernel modules, or see host pids. Anything needing those runs on the host
   as a small stdlib-only script (see ingenaning/telemetry/relay.py) or in
   userspace inside the container.
-- Hot branch: /tank/hot — ZFS mirror on the node, local, fast.
-- Cold branch: /mnt/cold — NFS 4.1 from the UNAS, mounted `hard` on the host.
-  Any I/O on it may block indefinitely when the UNAS is unreachable.
-- Both branches are bind-mounted into the container at the same paths.
-  Union: mergerfs inside the container at /srv/nas, policy `ff`
-  (create on hot), `moveonenospc`.
+- Hot branch: host /tank/hot -> CT 200 /mnt/hot. ZFS mirror on the node,
+  local, fast.
+- Cold branch: host /mnt/cold -> CT 200 /mnt/cold. NFS 4.1 from the UNAS,
+  mounted `hard` on the host. Any I/O on it may block indefinitely when the
+  UNAS is unreachable.
+- The daemon uses container paths; the relay uses host paths. Only the cold
+  branch has the same path on both sides — the hot branch is renamed crossing
+  in (deploy/lxc-200.conf). Union: mergerfs inside the container at /srv/nas,
+  policy `ff` (create on hot), `moveonenospc`.
 - SMB is served from the container (samba). NFS: see DECISIONS.md D-002.
 - Planners: Ollama at http://mac.oskar.co:11434. Frequently unavailable.
 - Telemetry arrives on a unix socket at /run/ingenaning/access.sock,
