@@ -39,3 +39,4 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+pythonpath = ["."]  # the project is a uv virtual project (no build backend): see DECISIONS D-009

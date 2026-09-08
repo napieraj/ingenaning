@@ -11,6 +11,7 @@ import pytest
 from hypothesis import given
 from hypothesis import settings as hsettings
 from hypothesis import strategies as st
+
 from ingenaning.store import queries as q
 from ingenaning.store.db import SCHEMA_VERSION, Database, connect
 

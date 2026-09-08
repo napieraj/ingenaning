@@ -26,7 +26,9 @@ def branches(tmp_path: Path) -> tuple[Path, Path, Path]:
 def settings(branches: tuple[Path, Path, Path], tmp_path: Path) -> Settings:
     hot, cold, union = branches
     return Settings(
-        hot_root=hot, cold_root=cold, union_root=union,
+        hot_root=hot,
+        cold_root=cold,
+        union_root=union,
         db_path=tmp_path / "aning.db",
         socket_path=tmp_path / "access.sock",
         ollama_url="http://127.0.0.1:1",  # unroutable on purpose
@@ -82,5 +84,8 @@ def ollama() -> FakeOllama:
 
 def access_line(ts: int, client: str, op: str, path: str, tier: str = "cold") -> str:
     import json
-    return json.dumps({"ts": ts, "client": client, "op": op, "path": path,
-                       "tier": tier, "bytes": 0}) + "\n"
+
+    return (
+        json.dumps({"ts": ts, "client": client, "op": op, "path": path, "tier": tier, "bytes": 0})
+        + "\n"
+    )
