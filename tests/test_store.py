@@ -91,6 +91,22 @@ def test_tx_rolls_back_on_error(db: Database):
         assert c.execute("SELECT COUNT(*) FROM access").fetchone()[0] == 0
 
 
+def test_tx_propagates_the_real_error_when_sqlite_rolled_back_itself(settings):
+    """On SQLITE_FULL, SQLite rolls the transaction back itself. An unconditional
+    ROLLBACK then raises "cannot rollback - no transaction is active" and replaces
+    the disk-full error the caller has to see."""
+    db = Database(settings.db_path)
+    db.migrate()
+    with db.connection() as c:
+        pages = int(c.execute("PRAGMA page_count").fetchone()[0])
+        c.execute(f"PRAGMA max_page_count = {pages + 2}")  # a full disk, deterministically
+    with pytest.raises(sqlite3.OperationalError) as excinfo, db.tx() as c:
+        for i in range(2000):
+            q.insert_access(c, [(i, "c", "open", "/p/" + "x" * 200 + str(i), 0, "cold")])
+    assert "disk is full" in str(excinfo.value)
+    db.close()
+
+
 def test_concurrent_writers_do_not_lock(db: Database):
     errors: list[BaseException] = []
 

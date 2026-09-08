@@ -98,7 +98,16 @@ class Database:
             try:
                 yield conn
             except BaseException:
-                conn.execute("ROLLBACK")
+                # SQLite rolls the transaction back itself on SQLITE_FULL, IOERR,
+                # NOMEM, BUSY and INTERRUPT. An unconditional ROLLBACK then raises
+                # "cannot rollback - no transaction is active" and that replaces the
+                # disk-full or busy error the caller has to see. The cleanup must
+                # never shadow the original failure.
+                try:
+                    if conn.in_transaction:
+                        conn.execute("ROLLBACK")
+                except sqlite3.Error:
+                    log.warning("ROLLBACK after a failed transaction failed", exc_info=True)
                 raise
             conn.execute("COMMIT")
 
