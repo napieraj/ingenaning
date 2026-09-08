@@ -231,3 +231,21 @@ def test_bad_hand_written_policy_still_raises(tmp_path: Path):
     (tmp_path / "policy.yaml").write_text("pins:\n  - {path: /warmish, tier: warm}\n")
     with pytest.raises(ValueError):
         load_settings(policy=tmp_path / "policy.yaml")
+
+
+@pytest.mark.parametrize("generated", [False, True])
+def test_broken_policy_entry_names_the_file_and_the_entry(tmp_path: Path, generated: bool):
+    """A pin without a path or a schedule without a name is a typo in the
+    hand-written file. The error must say which file and which entry, and must not
+    depend on whether policy.generated.yaml happens to exist."""
+    if generated:
+        (tmp_path / "policy.generated.yaml").write_text(
+            "pins:\n  - {path: /x, tier: hot, until: '2099-01-01'}\n"
+        )
+    policy = tmp_path / "policy.yaml"
+    policy.write_text("pins:\n  - {tier: hot}\n")
+    with pytest.raises(ValueError, match=r"policy\.yaml: pin entry .* has no 'path'"):
+        load_settings(policy=policy)
+    policy.write_text("schedules:\n  - {cron: '0 3 * * *', action: promote}\n")
+    with pytest.raises(ValueError, match=r"policy\.yaml: schedule entry .* has no 'name'"):
+        load_settings(policy=policy)

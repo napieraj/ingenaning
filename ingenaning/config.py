@@ -557,6 +557,16 @@ def _map_section(where: str, section: str, value: Any, keys: Mapping[str, str]) 
     return out
 
 
+def _require_key(entries: list[Any], key: str, where: str, what: str) -> list[Any]:
+    """Every mapping entry must carry `key`. The file is hand-written, so name the
+    file and the offending entry here rather than failing later, elsewhere, or only
+    when another file happens to exist."""
+    for e in entries:
+        if isinstance(e, Mapping) and key not in e:
+            raise ValueError(f"{where}: {what} entry {dict(e)!r} has no {key!r}")
+    return entries
+
+
 def flatten_policy(raw: Mapping[str, Any], where: str = "policy.yaml") -> dict[str, Any]:
     """Nested policy layout -> flat Settings input. Unknown keys are errors: the
     file is hand-written and a typo must not silently mean 'default'."""
@@ -565,9 +575,11 @@ def flatten_policy(raw: Mapping[str, Any], where: str = "policy.yaml") -> dict[s
         if key in _SECTIONS:
             out.update(_map_section(where, key, value, _SECTIONS[key]))
         elif key == "pins":
-            out["pins"] = _pin_entries(value, "yaml")
+            out["pins"] = _require_key(_pin_entries(value, "yaml"), "path", where, "pin")
         elif key == "schedules":
-            out["schedules"] = [{**s, "source": "yaml"} for s in _as_list(value)]
+            out["schedules"] = _require_key(
+                [{**s, "source": "yaml"} for s in _as_list(value)], "name", where, "schedule"
+            )
         elif key == "events":
             out["events"] = [_event_entry(e) for e in _as_list(value)]
         elif key in _PASSTHROUGH:
@@ -587,7 +599,11 @@ def merge_generated(data: dict[str, Any], generated: Mapping[str, Any], where: s
     hand-written policy is authoritative and is never dropped: it keeps raising."""
     dropped = 0
     pins: list[Any] = list(data.get("pins") or [])
-    have_paths = {_norm_path(str(p["path"])) for p in pins if isinstance(p, Mapping)}
+    # Entries reaching here have been through flatten_policy, which rejects a pin
+    # without a path; a direct caller gets its entry skipped rather than a KeyError.
+    have_paths = {
+        _norm_path(str(p["path"])) for p in pins if isinstance(p, Mapping) and "path" in p
+    }
     for p in _pin_entries(generated.get("pins"), "intent"):
         pin: PinRule | None = None
         if isinstance(p, Mapping):
@@ -609,7 +625,7 @@ def merge_generated(data: dict[str, Any], generated: Mapping[str, Any], where: s
     data["pins"] = pins
 
     scheds: list[Any] = list(data.get("schedules") or [])
-    have_names = {str(s["name"]) for s in scheds if isinstance(s, Mapping)}
+    have_names = {str(s["name"]) for s in scheds if isinstance(s, Mapping) and "name" in s}
     for s in _as_list(generated.get("schedules")):
         sched: ScheduleRule | None = None
         if isinstance(s, Mapping):
