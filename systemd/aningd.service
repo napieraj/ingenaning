@@ -1,0 +1,12 @@
+[Unit]
+Description=ingenaning tiering daemon
+After=network-online.target srv-nas.mount
+Requires=srv-nas.mount
+[Service]
+ExecStart=/opt/ingenaning/.venv/bin/aningd --config /etc/ingenaning/policy.yaml --db /var/lib/ingenaning/aning.db
+Restart=always
+RestartSec=5
+User=aning
+StateDirectory=ingenaning
+[Install]
+WantedBy=multi-user.target

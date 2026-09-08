@@ -1,0 +1,71 @@
+# /etc/ingenaning/policy.yaml — authoritative. Hand-edited only.
+paths:
+  hot: /mnt/hot
+  cold: /mnt/cold
+  union: /srv/nas
+  socket: /run/ingenaning/access.sock
+
+budgets:
+  hot_floor_free: 400G
+  demote_when_used_above: 80%
+  max_promote_per_run: 200G
+  max_moves_per_hour: 50
+
+pins:
+  hot: [/vm-disks, /models, /scratch, /plex-transcode]
+  cold: [/archive]
+
+executor:
+  skip_if_opened_within: 10m
+  quiet_hours: ["23:00-06:00"]
+  dry_run: true            # flip to false at build phase 5
+
+candidates:
+  ordinal_window: 3        # k
+  co_open_window: 1h       # T
+  lookback: 30d
+  cap: 5000
+
+sequence:
+  min_support: 5           # s
+  min_confidence: 0.6      # c
+  refit: "Sun 04:00"
+
+scorer:
+  min_labels: 500
+  refit: "Sun 04:30"
+
+bandit:
+  prior: [2, 1]
+  decay_weekly: 0.95
+  expectation_bonus: 3
+  expectation_miss: 0.5
+
+planners:
+  ollama_url: http://mac.oskar.co:11434
+  timeout_s: 60
+  arms:
+    p-media:        {model: "qwen2.5:14b-instruct", slice: history, stance: rank}
+    p-project:      {model: "qwen2.5:7b-instruct",  slice: active,  stance: complete}
+    p-context:      {model: "qwen2.5:14b-instruct", slice: context, stance: anticipate}
+    p-all:          {model: "qwen2.5:32b-instruct-q4", slice: all, stance: greedy, only: nightly}
+    p-conservative: {model: "qwen2.5:7b-instruct",  slice: all,     stance: conservative}
+
+signals:
+  primary: [presence]      # keep to 2–3; each multiplies bandit buckets
+  clock: true
+
+events:
+  - on: presence == approaching
+    run: promote
+    window_h: 6
+    arms: [p-context, p-media, sequence, scorer]
+  - on: workstation == on
+    run: promote
+    window_h: 4
+    arms: [p-project, sequence, scorer]
+
+schedules:
+  - {name: stats,   cron: "*/15 * * * *", action: promote, arms: [sequence, scorer]}
+  - {name: nightly, cron: "30 3 * * *",   action: promote, arms: [all]}
+  - {name: demote,  cron: "0 3 * * *",    action: demote}

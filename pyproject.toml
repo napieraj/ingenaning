@@ -1,0 +1,41 @@
+[project]
+name = "ingenaning"
+version = "0.1.0"
+description = "Tiering daemon: learned placement between local NVMe and a NAS behind one mergerfs namespace."
+requires-python = ">=3.12"
+dependencies = [
+  "click>=8.1",
+  "pydantic>=2.7",
+  "fastapi>=0.111",
+  "uvicorn[standard]>=0.30",
+  "jinja2>=3.1",
+  "httpx>=0.27",
+  "apscheduler>=3.10,<4",
+  "numpy>=1.26",
+  "scipy>=1.13",
+  "scikit-learn>=1.5",
+  "pyyaml>=6.0",
+  "paho-mqtt>=2.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.5", "mypy>=1.10", "hypothesis>=6"]
+
+[project.scripts]
+aning = "ingenaning.cli:main"
+aningd = "ingenaning.daemon:main"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

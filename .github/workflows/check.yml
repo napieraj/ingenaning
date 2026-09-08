@@ -1,0 +1,12 @@
+name: check
+on: [push, pull_request]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv sync --python 3.12 --extra dev
+      - run: uv run ruff check . && uv run ruff format --check .
+      - run: uv run mypy ingenaning
+      - run: uv run pytest -q

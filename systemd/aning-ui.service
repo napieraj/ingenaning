@@ -1,0 +1,9 @@
+[Unit]
+Description=ingenaning API and UI
+After=aningd.service
+[Service]
+ExecStart=/opt/ingenaning/.venv/bin/uvicorn ingenaning.api.app:app --host 10.20.30.10 --port 8080
+Restart=always
+User=aning
+[Install]
+WantedBy=multi-user.target

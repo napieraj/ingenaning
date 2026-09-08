@@ -1,0 +1,11 @@
+[Unit]
+Description=ingenaning host telemetry relay
+After=zfs-mount.service remote-fs.target
+[Service]
+ExecStart=/usr/local/bin/aning-relay --hot /tank/hot --cold /mnt/cold --socket /run/ingenaning/access.sock --ctid 200
+Restart=always
+RestartSec=2
+RuntimeDirectory=ingenaning
+RuntimeDirectoryMode=0755
+[Install]
+WantedBy=multi-user.target
