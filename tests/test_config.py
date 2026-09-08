@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -18,6 +19,15 @@ from ingenaning.config import (
 )
 
 EXAMPLE = Path(__file__).resolve().parents[1] / "deploy" / "policy.example.yaml"
+
+
+@pytest.fixture(autouse=True)
+def _no_inherited_aning_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """load_settings merges every ANING_* process variable over secrets.env, so a
+    variable in the developer's or the runner's shell decides what these tests see.
+    Clear them all; a test that needs one sets it itself, after this."""
+    for key in [k for k in os.environ if k.startswith("ANING_")]:
+        monkeypatch.delenv(key, raising=False)
 
 
 def test_parsers():
@@ -140,7 +150,6 @@ def test_secrets_env_and_overrides(tmp_path: Path, monkeypatch):
         'ANING_EMITTER_TOKENS="tok1, tok2"\nANING_OLLAMA_URL=http://o:1\n'
         "ANING_MQTT_URL=mqtt://u:p@broker:1884/prefix\n# comment\n"
     )
-    monkeypatch.delenv("ANING_OLLAMA_URL", raising=False)
     s = load_settings(policy=tmp_path / "policy.yaml", overrides={"dry_run": False})
     assert s.hot_root == Path("/h") and s.dry_run is False
     assert s.emitter_tokens == ["tok1", "tok2"] and s.ollama_url == "http://o:1"
@@ -249,3 +258,18 @@ def test_broken_policy_entry_names_the_file_and_the_entry(tmp_path: Path, genera
     policy.write_text("schedules:\n  - {cron: '0 3 * * *', action: promote}\n")
     with pytest.raises(ValueError, match=r"policy\.yaml: schedule entry .* has no 'name'"):
         load_settings(policy=policy)
+
+
+def test_process_env_beats_secrets_file_and_overrides_win_last(tmp_path: Path, monkeypatch):
+    """D-008 precedence, kept covered now that the environment is cleared for every
+    test in this file: secrets.env < ANING_* process variables < explicit overrides."""
+    (tmp_path / "policy.yaml").write_text("paths: {hot: /h}\n")
+    (tmp_path / "secrets.env").write_text(
+        "ANING_OLLAMA_URL=http://file:1\nANING_EMITTER_TOKENS=filetok\n"
+    )
+    monkeypatch.setenv("ANING_OLLAMA_URL", "http://env:2")
+    s = load_settings(policy=tmp_path / "policy.yaml")
+    assert s.ollama_url == "http://env:2"  # the process variable wins over the file
+    assert s.emitter_tokens == ["filetok"]  # the file stands where no variable is set
+    s = load_settings(policy=tmp_path / "policy.yaml", overrides={"ollama_url": "http://cli:3"})
+    assert s.ollama_url == "http://cli:3"  # an explicit override wins last
