@@ -42,14 +42,35 @@ bandit:
   expectation_miss: 0.5
 
 planners:
-  ollama_url: http://mac.oskar.co:11434
-  timeout_s: 60
+  ollama:
+    url: https://mac.oskar.co:443      # https required; host must be RFC1918
+    ca_file: /etc/ingenaning/ollama-ca.pem   # optional; default is system trust
+    timeout_s: 60
   arms:
     p-media:        {model: "qwen2.5:14b-instruct", slice: history, stance: rank}
     p-project:      {model: "qwen2.5:7b-instruct",  slice: active,  stance: complete}
     p-context:      {model: "qwen2.5:14b-instruct", slice: context, stance: anticipate}
     p-all:          {model: "qwen2.5:32b-instruct-q4", slice: all, stance: greedy, only: nightly}
     p-conservative: {model: "qwen2.5:7b-instruct",  slice: all,     stance: conservative}
+
+privacy:
+  retention:
+    access: 90d
+    signals: 90d
+    context: 90d
+    proposals: 180d
+    outcomes: 180d
+    prompt_log: 90d
+  purge_job: "04:15"
+  egress:
+    default: pseudonym          # share | basename | pseudonym | deny
+    paths:
+      /media: share             # titles are what the planner ranks on
+      /models: share
+      /projects: basename
+      /vm-disks: deny
+      /scratch: deny
+      /documents: pseudonym
 
 signals:
   primary: [presence]      # keep to 2–3; each multiplies bandit buckets
