@@ -4,14 +4,22 @@ emitter tokens, the Ollama URL and the MQTT URL, with ANING_* process variables 
 top of the file.
 
 `Settings` is flat so every module reads `settings.x`; `load_settings` maps the
-nested layout of deploy/policy.example.yaml onto it (D-013). There are no default
-pins: an empty policy pins nothing."""
+nested layout of deploy/policy.example.yaml onto it (D-013). Sub-models exist only
+where a group of parameters belongs to one component, so the file's `planners:` and
+`privacy:` blocks arrive as `settings.planners`, `settings.retention` and
+`settings.egress`. There are no default pins: an empty policy pins nothing.
+
+The one model endpoint is validated here: https to an RFC1918 or loopback host, or
+the daemon does not start (PRIVACY.md 2.1, SECURITY.md, D-009). EGRESS_KEY is not a
+Settings field — it is a secret, read by `egress_key()` at daemon start."""
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import os
 import re
+import socket
 from collections.abc import Mapping
 from datetime import date, datetime
 from pathlib import Path
@@ -27,6 +35,7 @@ Tier = Literal["hot", "cold"]
 Action = Literal["promote", "demote"]
 ArmKind = Literal["stat", "planner"]
 Source = Literal["yaml", "ui", "intent", "cli"]
+EgressMode = Literal["share", "basename", "pseudonym", "deny"]
 
 STAT_ARMS: tuple[str, ...] = ("sequence", "scorer")
 
@@ -95,6 +104,64 @@ def when_to_cron(value: str) -> str:
             raise ValueError(f"bad schedule {value!r}: unknown day {day!r}")
         dow = str(_DAYS[day.lower()])
     return f"{mm} {hh} * * {dow}"
+
+
+# --- the model endpoint ----------------------------------------------------------
+
+
+def _resolve(host: str) -> list[str]:
+    """Every address `host` resolves to, as strings.
+
+    The only DNS path in this module, by design: the tests replace this one name
+    and nothing else reaches a resolver. `socket.getaddrinfo(host, port)` returns
+    `[(family, type, proto, canonname, sockaddr)]` and sockaddr[0] is the address.
+    It can block on a dead resolver, so it is called at config load and never on a
+    hot path.
+    """
+    return [str(info[4][0]) for info in socket.getaddrinfo(host, None)]
+
+
+def _is_private(addr: str) -> bool:
+    """RFC1918 and friends. Loopback counts as private."""
+    try:
+        ip = ipaddress.ip_address(addr)
+    except ValueError:
+        return False
+    return ip.is_private or ip.is_loopback
+
+
+def check_local_url(url: str, what: str = "URL") -> str:
+    """`url` unchanged, or ValueError: it must be https and its host must be an
+    RFC1918 address or resolve to one.
+
+    PRIVACY.md 2.1 and SECURITY.md's threat-model table: this check and the egress
+    ACL on the gateway are the whole defence against a model endpoint that is not
+    the local one (D-009). A name that does not resolve is a failure, not a pass —
+    give an address literal when the resolver is unavailable.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme != "https":
+        raise ValueError(f"bad {what} {url!r}: must be https (PRIVACY.md 2.1)")
+    host = parsed.hostname
+    if not host:
+        raise ValueError(f"bad {what} {url!r}: no host")
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        try:
+            addrs = _resolve(host)
+        except OSError as exc:
+            raise ValueError(
+                f"bad {what} {url!r}: host does not resolve ({exc}); "
+                "use an RFC1918 address literal if no resolver is reachable"
+            ) from exc
+    else:
+        addrs = [host]
+    if not addrs or not all(_is_private(a) for a in addrs):
+        raise ValueError(
+            f"bad {what} {url!r}: the host must be an RFC1918 address or resolve to one"
+        )
+    return url
 
 
 def _norm_path(path: str) -> str:
@@ -250,6 +317,88 @@ class PlannerConfig(BaseModel):
     enabled: bool = True
 
 
+class OllamaConfig(BaseModel):
+    """The one model endpoint: `planners.ollama` in policy.yaml. `ca_file` is
+    optional; without it the system trust store is used (D-009: plain TLS to the
+    proxy in front of Ollama, no client certificates, no pinning)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    url: str = "https://127.0.0.1:11434"
+    ca_file: Path | None = None
+    timeout_s: float = 60.0
+
+    @field_validator("url")
+    @classmethod
+    def _url(cls, v: str) -> str:
+        return check_local_url(v, "planner URL")
+
+
+class PlannersConfig(BaseModel):
+    """The `planners:` block: the endpoint, the prompt budget, and the arms."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ollama: OllamaConfig = Field(default_factory=OllamaConfig)
+    token_budget: int = 12_000
+    arms: dict[str, PlannerConfig] = Field(default_factory=dict)
+
+
+class RetentionParams(BaseModel):
+    """`privacy.retention` plus `privacy.purge_job`: how long P0 rows live and when
+    the nightly job deletes beyond it (PRIVACY.md 2.3). Durations in seconds;
+    `purge_job` takes the same forms as any other cron field here."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    access: int = 90 * 86400
+    signals: int = 90 * 86400
+    context: int = 90 * 86400
+    proposals: int = 180 * 86400
+    outcomes: int = 180 * 86400
+    prompt_log: int = 90 * 86400
+    purge_job: str = "15 4 * * *"
+
+    @field_validator(
+        "access", "signals", "context", "proposals", "outcomes", "prompt_log", mode="before"
+    )
+    @classmethod
+    def _dur(cls, v: Any) -> int:
+        return parse_duration(v)
+
+    @field_validator("purge_job", mode="before")
+    @classmethod
+    def _cron(cls, v: Any) -> str:
+        return when_to_cron(v)
+
+
+class EgressParams(BaseModel):
+    """`privacy.egress`: the default mode for a path that leaves the container and
+    the per-prefix overrides (PRIVACY.md 2.10, D-010).
+
+    This is the configuration side only. The sanitiser owns the behaviour; hand it
+    `EgressPolicy(**settings.egress.policy_kwargs(key))` where `key` is EGRESS_KEY
+    from secrets.env. config.py deliberately does not import that package, so the
+    config layer stays below it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    default: EgressMode = "pseudonym"
+    paths: dict[str, EgressMode] = Field(default_factory=dict)
+
+    @field_validator("paths", mode="before")
+    @classmethod
+    def _paths(cls, v: Any) -> Any:
+        if not isinstance(v, Mapping):
+            return v
+        return {_norm_path(str(k)): mode for k, mode in v.items()}
+
+    def policy_kwargs(self, key: str) -> dict[str, Any]:
+        """Arguments for the sanitiser's EgressPolicy(paths=, default=, key=)."""
+        return {"paths": dict(self.paths), "default": self.default, "key": key}
+
+
 class CandidateParams(BaseModel):
     """Generic candidate generation (arms/candidates.py). Durations in seconds."""
 
@@ -401,10 +550,11 @@ class Settings(BaseModel):
     bandit: BanditParams = Field(default_factory=BanditParams)
 
     # planners
-    ollama_url: str = "http://mac.oskar.co:11434"
-    ollama_timeout_s: float = 60.0
-    planner_token_budget: int = 12_000
-    planners: dict[str, PlannerConfig] = Field(default_factory=dict)
+    planners: PlannersConfig = Field(default_factory=PlannersConfig)
+
+    # privacy. EGRESS_KEY is not here: see egress_key().
+    retention: RetentionParams = Field(default_factory=RetentionParams)
+    egress: EgressParams = Field(default_factory=EgressParams)
 
     # signals, events, timers
     signals_primary: list[str] = Field(default_factory=list)
@@ -484,13 +634,13 @@ class Settings(BaseModel):
         if kind in (None, "stat"):
             names.extend(STAT_ARMS)
         if kind in (None, "planner"):
-            names.extend(n for n, p in self.planners.items() if p.enabled or not enabled_only)
+            names.extend(n for n, p in self.planners.arms.items() if p.enabled or not enabled_only)
         return names
 
     def arm_kind(self, name: str) -> ArmKind | None:
         if name in STAT_ARMS:
             return "stat"
-        if name in self.planners:
+        if name in self.planners.arms:
             return "planner"
         return None
 
@@ -516,22 +666,24 @@ _BUDGET_KEYS = {
     )
 }
 _EXECUTOR_KEYS = {k: k for k in ("skip_if_opened_within", "quiet_hours", "dry_run")}
-_PLANNER_KEYS = {
-    "ollama_url": "ollama_url",
-    "timeout_s": "ollama_timeout_s",
-    "token_budget": "planner_token_budget",
-    "arms": "planners",
-}
 _SIGNAL_KEYS = {"primary": "signals_primary", "clock": "signals_clock"}
 _SECTIONS = {
     "paths": _PATH_KEYS,
     "budgets": _BUDGET_KEYS,
     "executor": _EXECUTOR_KEYS,
-    "planners": _PLANNER_KEYS,
     "signals": _SIGNAL_KEYS,
 }
 # Sections handed to Settings under their own name.
-_PASSTHROUGH = ("candidates", "sequence", "scorer", "bandit", "mqtt", "api", "log_level")
+_PASSTHROUGH = (
+    "candidates",
+    "sequence",
+    "scorer",
+    "bandit",
+    "planners",
+    "mqtt",
+    "api",
+    "log_level",
+)
 
 
 def _event_entry(e: Any) -> Any:
@@ -542,6 +694,34 @@ def _event_entry(e: Any) -> Any:
         fixed["on"] = fixed.pop(True)
         return fixed
     return e
+
+
+def _privacy_section(where: str, value: Any) -> dict[str, Any]:
+    """`privacy:` -> the flat `retention` and `egress` keys. `purge_job` sits beside
+    `retention` in the file because that is where an operator looks for it, and on
+    RetentionParams because it is the same concern."""
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{where}: privacy must be a mapping")
+    retention: dict[str, Any] = {}
+    out: dict[str, Any] = {}
+    for k, v in value.items():
+        if k == "retention":
+            if v is None:
+                continue
+            if not isinstance(v, Mapping):
+                raise ValueError(f"{where}: privacy.retention must be a mapping")
+            retention.update(v)
+        elif k == "purge_job":
+            retention["purge_job"] = v
+        elif k == "egress":
+            out["egress"] = v
+        else:
+            raise ValueError(f"{where}: unknown key privacy.{k}")
+    if retention:
+        out["retention"] = retention
+    return out
 
 
 def _map_section(where: str, section: str, value: Any, keys: Mapping[str, str]) -> dict[str, Any]:
@@ -574,6 +754,8 @@ def flatten_policy(raw: Mapping[str, Any], where: str = "policy.yaml") -> dict[s
     for key, value in raw.items():
         if key in _SECTIONS:
             out.update(_map_section(where, key, value, _SECTIONS[key]))
+        elif key == "privacy":
+            out.update(_privacy_section(where, value))
         elif key == "pins":
             out["pins"] = _require_key(_pin_entries(value, "yaml"), "path", where, "pin")
         elif key == "schedules":
@@ -719,13 +901,39 @@ def parse_mqtt_url(url: str) -> dict[str, Any]:
 
 
 def apply_secrets(data: dict[str, Any], env: Mapping[str, str]) -> None:
-    """ANING_EMITTER_TOKENS (comma list), ANING_OLLAMA_URL, ANING_MQTT_URL."""
+    """ANING_EMITTER_TOKENS (comma list), ANING_OLLAMA_URL, ANING_MQTT_URL.
+
+    EGRESS_KEY is deliberately not read here: it never becomes part of Settings.
+    """
     if tokens := env.get("ANING_EMITTER_TOKENS"):
         data["emitter_tokens"] = [t.strip() for t in tokens.split(",") if t.strip()]
     if url := env.get("ANING_OLLAMA_URL"):
-        data["ollama_url"] = url
+        # Only the URL is replaced; the arms and the CA file from policy.yaml stand.
+        planners = dict(data.get("planners") or {})
+        ollama = dict(planners.get("ollama") or {})
+        ollama["url"] = url
+        planners["ollama"] = ollama
+        data["planners"] = planners
     if murl := env.get("ANING_MQTT_URL"):
         data["mqtt"] = parse_mqtt_url(murl)
+
+
+def egress_key(settings: Settings) -> str:
+    """EGRESS_KEY, from the process environment or secrets.env, or RuntimeError.
+
+    AGENTS.md rule 14: the daemon refuses to start without it, so daemon.py calls
+    this once at startup and lets the exception stop it. It is not a Settings field
+    and never reaches policy.yaml, a repr, or a log line: without the key nothing
+    outbound can be pseudonymised, and a deployment that silently generated one
+    would produce pseudonyms that do not match yesterday's.
+    """
+    key = os.environ.get("EGRESS_KEY") or read_env_file(settings.secrets_path).get("EGRESS_KEY")
+    if not key:
+        raise RuntimeError(
+            "EGRESS_KEY is not set in the environment or secrets.env; outbound text "
+            "cannot be pseudonymised, so the daemon does not start (AGENTS.md rule 14)"
+        )
+    return key
 
 
 def load_settings(

@@ -136,7 +136,10 @@ class Database:
                     if conn.in_transaction:
                         conn.execute("ROLLBACK")
                     raise
-                log.info("applied schema migration %d to %s", m.version, self.path)
+                # Which file was migrated is a DEBUG detail: INFO and above carry no
+                # path (PRIVACY.md 2.11, enforced by tests/test_privacy.py).
+                log.debug("applied schema migration %d to %s", m.version, self.path)
+                log.info("applied schema migration %d", m.version)
         return SCHEMA_VERSION
 
     def version(self) -> int:

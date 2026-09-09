@@ -31,7 +31,9 @@ def settings(branches: tuple[Path, Path, Path], tmp_path: Path) -> Settings:
         union_root=union,
         db_path=tmp_path / "aning.db",
         socket_path=tmp_path / "access.sock",
-        ollama_url="http://127.0.0.1:1",  # unroutable on purpose
+        # https and a private host or Settings refuses it; port 1 is unroutable
+        # on purpose so nothing in the suite can reach a planner.
+        planners={"ollama": {"url": "https://127.0.0.1:1"}},
         dry_run=True,
     )
 
