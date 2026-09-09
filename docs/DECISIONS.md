@@ -42,14 +42,60 @@ outcomes; every tiering tool (mergerfs movers, autotier, HSMs) places by
 frequency/age/fullness after the fact. The union and the move primitive are
 therefore reused, not rewritten:
 - mergerfs stays the union, per its documented tiered-cache pattern.
-- executor/move.py adopts the mechanics of mergerfs-cache-mover
-  (instance lock, hysteresis, empty-dir cleanup, rsync invocation) and
-  keeps only arm-driven file selection as original code.
+- executor/move.py adopts the mechanics of mergerfs-cache-mover (GPL-3,
+  mechanics only, no code vendored): it issues no rsync at all — it copies
+  to a temporary name and then atomically renames, specifically to avoid
+  racing mergerfs's newest-file resolution, then removes the source and
+  cleans empty directories. Taken with it: the single-instance lock and the
+  threshold/target hysteresis. The rsync flag set, if rsync is used at all,
+  comes from trapexit's example movers under tools/ in the mergerfs repo
+  (ISC). Only arm-driven file selection is original code.
 - autotier is reference only. Speedloader is a candidate for /models if
   that directory dominates.
 See AGENTS.md "Prior art" and rule 11.
 
-## D-007 — 2026-09-08 — Schema additions to build doc section 2
+## D-007 — 2026-09-08 — Privacy and security as repo rules
+The database is a behavioural profile. PRIVACY.md classifies data (P0/P1/P2),
+mandates local-only inference, retention, ZFS-encrypted rootfs with raw
+replication, purge commands, and an auth gate before any exposure beyond the
+storage VLAN. SECURITY.md sets engineering rules (no shell interpolation,
+path validation, untrusted model output and signals, hashed emitter tokens,
+pinned deps with pip-audit). tests/test_privacy.py enforces the mechanical
+subset. Rule 12 added to AGENTS.md.
+
+## D-008 — 2026-09-08 — Append-only, hash-chained, off-box-anchored audit
+A compromised daemon must not be able to hide its actions. Audit events are
+hash-chained JSON lines written only by the host relay (root) to a
+`chattr +a` file on `tank/audit`, snapshotted every 15 min with holds,
+replicated raw to pve2, and anchored (seq, hash) every 15 min to the
+basement gateway's syslog and an append-only share on the DS1525+.
+`aning audit verify` checks the chain against anchors; a weekly timer runs
+it. The daemon stops moving files when it cannot audit. See SECURITY.md.
+
+## D-009 — 2026-09-08 — No endpoint pinning for Ollama
+mTLS and DNS pinning defend only a hostile device on a five-member VLAN.
+They do nothing if the Mac or the container is compromised, which are the
+cases that matter. Decision: `https://` and RFC1918 enforced in config,
+plain TLS via Caddy on the Mac, optional CA file, no client certs, no
+custom resolver. Effort goes to prompt minimisation, the UDM egress ACL for
+CT 200, and the audit chain. See SECURITY.md threat-model table.
+
+## D-010 — 2026-09-08 — Egress sanitiser
+The planner prompt is the one designed exit for P0 data. `egress/sanitize.py`
+is the single choke point: per-prefix path policy (share / basename /
+pseudonym / deny, default pseudonym), secret-file denylist, pattern scrub
+for PII and credentials, stable HMAC pseudonyms with a local reverse map.
+Rule 14 added. Trade-off accepted: fully pseudonymised directories lose
+semantic ranking by the planners and rely on sequence/scorer arms; the
+per-prefix policy lets you choose per subtree.
+
+## D-011 — 2026-09-08 — Names of known people are pseudonymised by dictionary
+No regex finds a name. A local `people` table (names, variants, nicknames)
+drives replacement with stable HMAC `person:` tokens before pattern scrub;
+a capitalised-token suggester feeds the UI; NER (spaCy) deferred until the
+dictionary's misses are observed. The table is P0, never exported.
+
+## D-012 — 2026-09-08 — Schema additions to build doc section 2
 store/schema.sql is section 2 with these changes; everything else is verbatim.
 (a) files.group_key TEXT and files.ordinal INTEGER replace project_key/media_key
     (D-003). files.seen INTEGER stamps the walk that last saw a row so
@@ -81,7 +127,7 @@ Paths are normalised on every write and lookup (store/queries.norm_path: one
 leading slash, no doubled or trailing slashes) so the relay and the scanner
 never fork one file into two rows.
 
-## D-008 — 2026-09-08 — Flat Settings, nested policy.yaml, no default pins
+## D-013 — 2026-09-08 — Flat Settings, nested policy.yaml, no default pins
 config.Settings is flat (hot_root, hot_floor_free, skip_if_opened_within, ...;
 sub-models only for candidates, sequence, scorer, bandit, planners, mqtt, api).
 load_settings maps the nested layout of deploy/policy.example.yaml (paths,
@@ -97,9 +143,29 @@ ANING_OLLAMA_URL and ANING_MQTT_URL (mqtt://user:pass@host:port/prefix);
 ANING_* process variables override the file; explicit overrides (CLI flags)
 win last.
 
-## D-009 — 2026-09-08 — Tests import the checkout; build backend OPEN
-pyproject.toml has no [build-system], so uv treats the project as virtual and
-never installs it; `uv run pytest` could not import `ingenaning`. pytest gets
-`pythonpath = ["."]` so the suite runs from the checkout. The build doc's
-"single wheel" and the `aning`/`aningd` entry points need a build backend;
-choosing one is a separate decision for when cli/daemon land.
+A typo in policy.yaml is the operator's mistake and must stop the daemon so
+it is noticed; a bad entry in policy.generated.yaml is a model's mistake and
+must be dropped with a logged warning so the daemon keeps going. Same parser,
+opposite consequences by design — do not collapse the two paths into a single
+try block.
+
+## D-014 — 2026-09-08 — Tests import the checkout; build backend hatchling
+pyproject.toml had no [build-system], so uv treated the project as virtual and
+never installed it; `uv run pytest` could not import `ingenaning`, and pytest
+was given `pythonpath = ["."]` so the suite ran from the checkout. That left
+the build doc's "single wheel" and the `aning`/`aningd` entry points open.
+Resolved: [build-system] requires hatchling with build-backend
+`hatchling.build`, and [tool.hatch.build.targets.wheel] packages =
+["ingenaning"]. hatchling is the uv default, needs no plugin for a single
+top-level package, and is already a transitive build dependency, so it adds
+nothing to the runtime set. `uv sync` now installs the project editable into
+.venv: imports resolve from any working directory, the pytest `pythonpath`
+line is deleted, and `aning`/`aningd` appear in .venv/bin. Those two scripts
+raise ImportError until cli.py and daemon.py land; that is expected and is not
+stubbed.
+
+## D-015 — reserved; the plaintext entities draft was superseded before
+   it was written. See D-017.
+
+## D-016 — reserved; the HA-importer draft with ha_ref lookup was
+   superseded before it was written. See D-017.
