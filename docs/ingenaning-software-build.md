@@ -184,6 +184,7 @@ Protocol:
 class Arm(Protocol):
     name: str
     kind: Literal["stat", "planner", "intent"]
+
     def propose(self, ctx: Context, pool: CandidatePool) -> list[Proposal]: ...
 ```
 
