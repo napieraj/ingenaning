@@ -46,6 +46,9 @@ ingenaning/
 │   ├── outcomes/
 │   │   ├── outcomes.py     # match opens to proposals, write rewards
 │   │   └── metrics.py      # first-open-on-hot, per-arm hit rate
+│   ├── egress/
+│   │   └── sanitize.py     # single outbound choke point (D-010)
+│   ├── audit.py            # emit(); client for the relay's audit socket; local bounded queue
 │   ├── api/
 │   │   ├── app.py          # FastAPI, serves the single-page UI + JSON
 │   │   ├── templates/      # Jinja partials for htmx
@@ -60,7 +63,9 @@ ingenaning/
 │       └── p_intent.md
 ├── systemd/
 │   ├── aningd.service
-│   ├── aning-relay.service   # host side
+│   ├── aning-relay.service   # host side: telemetry + audit receiver
+│   ├── aning-audit-anchor.timer  # host: publish (seq, hash) every 15 min
+│   ├── aning-audit-verify.timer  # host: weekly chain verification
 │   └── aning-ui.service
 ├── deploy/
 │   ├── lxc-200.conf
@@ -194,7 +199,7 @@ Planner prompt assembly (`arms/planner.py`):
 
 1. System prompt from `prompts/<arm>.md`.
 2. Context block: the current vector, one line per signal with its source and age.
-3. Slice: per-arm selection of history and pool, capped at 12k tokens.
+3. Slice: per-arm selection of history and pool, capped at 12k tokens, every path and text field passed through `egress.sanitize.Sanitizer`; responses are mapped back through the local pseudonym table before validation against the pool.
 4. Feedback block: this arm's last 50 proposals with `hit` and UI `feedback`.
 5. Output schema:
 
@@ -252,6 +257,10 @@ Metrics exposed at `/api/metrics` and kept in a daily table:
 - `first_open_hot_rate` — of all first opens of a file in 24 h, share that were hot. The number.
 - per-arm `hit_rate_7d`, `proposals_7d`, `bytes_moved_7d`
 - `hot_utilisation`, `evictions_7d`, `moves_failed_7d`
+
+## 8b. Audit
+
+See SECURITY.md "Append-only audit log". `audit.emit()` is called before every state change; the relay appends; `aning audit verify` walks the chain. `/api/status` exposes `audit_backlog` and `audit_last_anchor_ts`.
 
 ## 9. API
 

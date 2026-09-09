@@ -1,0 +1,13 @@
+# /opt/homebrew/etc/Caddyfile on the Mac Studio. Ollama listens on 127.0.0.1:11434.
+# Certificate: either `tls internal` (Caddy's own CA; copy its root to the
+# container as ollama-ca.pem) or a cert from the lab CA via `tls cert key`.
+
+mac.oskar.co:443 {
+    bind 10.20.30.5
+    tls internal
+    reverse_proxy 127.0.0.1:11434
+    log {
+        output file /opt/homebrew/var/log/caddy-ollama.log
+        format json
+    }
+}

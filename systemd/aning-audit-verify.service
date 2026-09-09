@@ -1,0 +1,5 @@
+[Unit]
+Description=Verify ingenaning audit chain
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/aning-relay verify --log /var/log/ingenaning/audit.jsonl --anchors /mnt/audit-anchor/ --notify-url-file /etc/ingenaning/notify.url

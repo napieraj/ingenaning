@@ -42,6 +42,13 @@ Applies to any agent or person working in this repository.
 10. Models propose promotion only. No code path lets a planner demote,
     delete, or pin.
 
+## Privacy and security
+PRIVACY.md and SECURITY.md are rules, not policy prose. Read both before
+touching store/, arms/, api/, telemetry/, or prompts/. tests/test_privacy.py
+enforces what can be enforced. Rule 12: any change that adds a network
+call, a new stored field, a new prompt, or a new log line at INFO or above
+cites the PRIVACY.md principle it complies with in the PR description.
+
 ## Layout
 See docs/ingenaning-software-build.md §1. Documents in docs/ are the spec;
 docs/DECISIONS.md overrides them where they conflict.
@@ -64,3 +71,16 @@ arms, the bandit, outcomes, expectations, signals. Effort goes there.
 Rule 11. Before writing any module under executor/ or telemetry/, check
 this table and the linked sources. A PR that reimplements a listed concern
 without a DECISIONS.md entry explaining why is rejected.
+
+Rule 13. Every state-changing action in executor/, api/, and arms/intent.py
+calls `audit.emit(event, data)` before the change is applied. No module
+other than telemetry/relay.py writes to the audit file. The daemon refuses
+moves while the audit backlog exceeds the configured limit.
+
+Rule 14. Outbound text — planner prompts, notifications, INFO+ logs — is
+built only via egress.sanitize.Sanitizer. Raw paths or free text from the
+store never reach an httpx call, a webhook, or a log.info(). The daemon
+refuses to start without EGRESS_KEY.
+
+Rule 15. A new module lands with its tests run in the sandbox, and the run
+output pasted in the PR. Written-but-not-run tests are not tests.
