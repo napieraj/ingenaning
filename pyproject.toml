@@ -1,3 +1,7 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
 name = "ingenaning"
 version = "0.1.0"
@@ -19,11 +23,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.5", "mypy>=1.10", "hypothesis>=6"]
+dev = ["pip-audit>=2.7", "pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.5", "mypy>=1.10", "hypothesis>=6"]
 
 [project.scripts]
 aning = "ingenaning.cli:main"
 aningd = "ingenaning.daemon:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["ingenaning"]
 
 [tool.ruff]
 line-length = 100
@@ -39,4 +46,3 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-pythonpath = ["."]  # the project is a uv virtual project (no build backend): see DECISIONS D-009
