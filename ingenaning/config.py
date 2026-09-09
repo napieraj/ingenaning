@@ -598,6 +598,8 @@ def merge_generated(data: dict[str, Any], generated: Mapping[str, Any], where: s
     file the intent arm wrote can never reach Settings and stop the daemon. The
     hand-written policy is authoritative and is never dropped: it keeps raising."""
     dropped = 0
+    undated = 0
+    shadowed = 0
     pins: list[Any] = list(data.get("pins") or [])
     # Entries reaching here have been through flatten_policy, which rejects a pin
     # without a path; a direct caller gets its entry skipped rather than a KeyError.
@@ -615,10 +617,12 @@ def merge_generated(data: dict[str, Any], generated: Mapping[str, Any], where: s
             dropped += 1
             continue
         if pin.until is None:
-            log.warning("%s: pin %s has no until and is ignored", where, pin.path)
+            undated += 1
+            log.debug("%s: pin %s has no until and is ignored", where, pin.path)
             continue
         if pin.path in have_paths:
-            log.info("%s: pin %s is set by policy.yaml; generated entry ignored", where, pin.path)
+            shadowed += 1
+            log.debug("%s: pin %s is set by policy.yaml; generated entry ignored", where, pin.path)
             continue
         pins.append(pin)
         have_paths.add(pin.path)
@@ -637,10 +641,12 @@ def merge_generated(data: dict[str, Any], generated: Mapping[str, Any], where: s
             dropped += 1
             continue
         if sched.until is None:
-            log.warning("%s: schedule %s has no until and is ignored", where, sched.name)
+            undated += 1
+            log.debug("%s: schedule %s has no until and is ignored", where, sched.name)
             continue
         if sched.name in have_names:
-            log.info(
+            shadowed += 1
+            log.debug(
                 "%s: schedule %s is set by policy.yaml; generated entry ignored", where, sched.name
             )
             continue
@@ -651,9 +657,17 @@ def merge_generated(data: dict[str, Any], generated: Mapping[str, Any], where: s
     for key in generated:
         if key not in ("pins", "schedules"):
             log.warning("%s: key %r is not something the generated policy may set", where, key)
-    if dropped:
-        # Counts only: the paths in this file are the user's, and this is a warning.
-        log.warning("%s: dropped %d entries that did not validate", where, dropped)
+    if dropped or undated or shadowed:
+        # Counts only. The paths and names in this file are the user's: PRIVACY.md
+        # keeps them to DEBUG, so INFO and above carry how many, never which.
+        log.warning(
+            "%s: %d entries dropped as invalid, %d ignored for having no until, "
+            "%d already set by policy.yaml",
+            where,
+            dropped,
+            undated,
+            shadowed,
+        )
 
 
 def read_yaml(path: Path) -> dict[str, Any]:

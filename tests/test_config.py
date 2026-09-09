@@ -235,6 +235,28 @@ def test_bad_generated_entries_are_dropped_and_yaml_survives(tmp_path: Path, cap
     assert "/warmish" not in caplog.text  # counts, not paths
 
 
+def test_ignored_generated_entries_are_counted_without_naming_them(tmp_path: Path, caplog):
+    """PRIVACY.md: WARNING and above carry how many entries were ignored, never
+    which. The paths and names live at DEBUG."""
+    (tmp_path / "policy.yaml").write_text("pins: {hot: [/keep]}\n")
+    (tmp_path / "policy.generated.yaml").write_text(
+        "pins:\n"
+        "  - {path: /noexpiry, tier: hot}\n"
+        "  - {path: /keep, tier: cold, until: '2099-01-01'}\n"
+    )
+    with caplog.at_level("WARNING"):
+        s = load_settings(policy=tmp_path / "policy.yaml")
+    assert {(p.path, p.source) for p in s.pins} == {("/keep", "yaml")}
+    assert "1 ignored for having no until" in caplog.text
+    assert "1 already set by policy.yaml" in caplog.text
+    for name in ("/noexpiry", "/keep"):
+        assert name not in caplog.text
+    caplog.clear()
+    with caplog.at_level("DEBUG"):
+        load_settings(policy=tmp_path / "policy.yaml")
+    assert "/noexpiry" in caplog.text  # the detail is kept, just not at WARNING
+
+
 def test_bad_hand_written_policy_still_raises(tmp_path: Path):
     """policy.yaml is authoritative: a typo there must not silently mean 'default'."""
     (tmp_path / "policy.yaml").write_text("pins:\n  - {path: /warmish, tier: warm}\n")
