@@ -264,11 +264,20 @@ def insert_signals(conn: sqlite3.Connection, rows: Sequence[tuple[int, str, str,
     return len(rows)
 
 
+# Newest emitted row per signal name. `ts` alone does not order the rows: a
+# producer emitting twice in one second, or a batch carrying an explicit ts,
+# leaves two rows with the same ts and MAX(ts) then picks either one. rowid
+# breaks the tie in insertion order, so the last value emitted always wins.
+_LATEST_SIGNAL_SQL: Final = """
+    SELECT name, value, source, ts FROM (
+      SELECT name, value, source, ts,
+             ROW_NUMBER() OVER (PARTITION BY name ORDER BY ts DESC, rowid DESC) AS rn
+      FROM signals) WHERE rn = 1"""
+
+
 def latest_signals(conn: sqlite3.Connection) -> dict[str, sqlite3.Row]:
-    """Newest emitted row per signal name, declared or not. SQLite guarantees the
-    bare columns come from the row holding MAX(ts)."""
-    rows = _all(conn, "SELECT name, value, source, MAX(ts) AS ts FROM signals GROUP BY name")
-    return {r["name"]: r for r in rows}
+    """Newest emitted row per signal name, declared or not."""
+    return {r["name"]: r for r in _all(conn, _LATEST_SIGNAL_SQL)}
 
 
 class SignalValue(TypedDict):
@@ -289,11 +298,10 @@ def latest_values(conn: sqlite3.Connection, now: int) -> dict[str, SignalValue]:
     still counts as fresh. Undeclared names are not listed."""
     rows = _all(
         conn,
-        """SELECT d.name, d.kind, d.bucket_role, d.ttl_s, s.value, s.ts, s.source
-           FROM signal_defs d
-           LEFT JOIN (SELECT name, value, source, MAX(ts) AS ts FROM signals GROUP BY name) s
-             ON s.name=d.name
-           ORDER BY d.name""",
+        f"""SELECT d.name, d.kind, d.bucket_role, d.ttl_s, s.value, s.ts, s.source
+            FROM signal_defs d
+            LEFT JOIN ({_LATEST_SIGNAL_SQL}) s ON s.name=d.name
+            ORDER BY d.name""",
     )
     out: dict[str, SignalValue] = {}
     for r in rows:
