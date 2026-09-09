@@ -4,7 +4,7 @@ emitter tokens, the Ollama URL and the MQTT URL, with ANING_* process variables 
 top of the file.
 
 `Settings` is flat so every module reads `settings.x`; `load_settings` maps the
-nested layout of deploy/policy.example.yaml onto it (D-008). There are no default
+nested layout of deploy/policy.example.yaml onto it (D-013). There are no default
 pins: an empty policy pins nothing."""
 
 from __future__ import annotations

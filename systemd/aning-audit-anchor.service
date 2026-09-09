@@ -1,0 +1,5 @@
+[Unit]
+Description=Publish ingenaning audit chain head
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/aning-relay anchor --log /var/log/ingenaning/audit.jsonl --syslog udp://ucg-lab.oskar.co:514 --share /mnt/audit-anchor/

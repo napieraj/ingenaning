@@ -283,7 +283,7 @@ def test_broken_policy_entry_names_the_file_and_the_entry(tmp_path: Path, genera
 
 
 def test_process_env_beats_secrets_file_and_overrides_win_last(tmp_path: Path, monkeypatch):
-    """D-008 precedence, kept covered now that the environment is cleared for every
+    """D-013 precedence, kept covered now that the environment is cleared for every
     test in this file: secrets.env < ANING_* process variables < explicit overrides."""
     (tmp_path / "policy.yaml").write_text("paths: {hot: /h}\n")
     (tmp_path / "secrets.env").write_text(

@@ -1,5 +1,5 @@
 -- ingenaning store, migration 1. Build doc section 2 plus the additions recorded in
--- docs/DECISIONS.md D-007. Applied once by store/db.py inside one transaction; the
+-- docs/DECISIONS.md D-012. Applied once by store/db.py inside one transaction; the
 -- `migrations` table itself is created by db.py before this runs.
 -- Times are epoch seconds. Paths are union-relative with one leading slash.
 

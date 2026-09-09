@@ -17,7 +17,17 @@
 4. `systemctl enable --now aningd aning-ui`.
 
 ## Mac
-`ollama serve` bound to the storage VLAN; pull the models named in policy.yaml.
+`ollama serve` bound to 127.0.0.1 only. Caddy in front, TLS on the storage
+VLAN: see `deploy/Caddyfile.mac`. Certificate from the lab CA or Caddy's
+internal CA; either way put the CA in `/etc/ingenaning/ollama-ca.pem` on
+the container and set `planners.ollama.ca_file`. Pull the models named in
+policy.yaml.
+
+## UDM Pro Max — egress ACL for CT 200
+Firewall → LAN Out (or Traffic Rules): source 10.20.30.10, allow to
+Mac:443, broker:8883, UNAS:2049, Technitium:53; then drop + log all other
+outbound. Verify with `curl -m 3 https://1.1.1.1` from the container: must
+time out.
 
 ## Verify
 `aning status` shows both branches, socket connected, `dry_run: true`.
